@@ -174,22 +174,43 @@ class Organizations: # pylint: disable=R0904
     def get_ou_root_id(self):
         return self.client.list_roots().get('Roots')[0].get('Id')
 
+    def get_accounts_for_children(self, p, ou_id):
+        accounts = []        
+        if p:
+            p.pop(0)
+        if not p:
+            for account in self.get_accounts_for_parent(ou_id):
+                accounts.append(account)
+        for ou in self.get_child_ous(ou_id):
+            if p:
+                accounts.extend(self.get_accounts(p.copy(), ou["Id"]))
+            else: 
+                accounts.extend(self.get_accounts_for_children(p.copy(), ou["Id"]))
+        return accounts
+
+    def get_accounts_for_child(self, p, ou_id):
+        accounts = []
+        for ou in self.get_child_ous(ou_id):
+            if ou['Name'] == p[0]:
+                p.pop(0)
+                if p:
+                    accounts.extend(self.get_accounts(p.copy(), ou["Id"]))
+                else:
+                    for account in self.get_accounts_for_parent(ou["Id"]):
+                        accounts.append(account)
+                return accounts
+                break
+
+    def get_accounts(self, p, ou_id):
+        if p[0] == "*":
+            return self.get_accounts_for_children(p, ou_id)
+        else: 
+            return self.get_accounts_for_child(p, ou_id)
+
     def dir_to_ou(self, path):
         p = path.split('/')[1:]
         ou_id = self.get_ou_root_id()
-
-        while p:
-            for ou in self.get_child_ous(ou_id):
-                if ou['Name'] == p[0]:
-                    p.pop(0)
-                    ou_id = ou['Id']
-                    break
-            else:
-                raise Exception(
-                    "Path {0} failed to return a child OU at '{1}'".format(
-                        path, p[0]))
-        else: # pylint: disable=W0120
-            return self.get_accounts_for_parent(ou_id)
+        return self.get_accounts(p, ou_id)
 
     def build_account_path(self, ou_id, account_path, cache):
         """Builds a path tree to the account from the root of the Organization

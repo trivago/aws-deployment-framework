@@ -63,3 +63,16 @@ def test_build_account_path(cls):
     cls.client.describe_organizational_unit.return_value = stub_organizations.describe_organizational_unit
 
     assert cls.build_account_path('some_ou_id', [], cache) == 'some_ou_name'
+
+def test_dir_to_ou(cls):
+    cls.client.list_roots = stub_organizations.list_roots
+    cls.get_accounts_for_parent = stub_organizations.get_accounts_for_parent
+    cls.get_child_ous = stub_organizations.get_child_ous
+
+    assert cls.dir_to_ou("/domain/*/prod") == [{'Name': 'app1-prod', 'Id': 'account_4'}, {'Name': 'app2-prod', 'Id': 'account_6'}]
+    assert cls.dir_to_ou("/domain/app2") == [{'Name': 'app2-sandbox', 'Id': 'account_5'}]
+    assert cls.dir_to_ou("/domain/app2/*") == [{'Name': 'app2-sandbox', 'Id': 'account_5'}, {'Name': 'app2-prod', 'Id': 'account_6'}]
+    assert cls.dir_to_ou("/domain/*") == [{'Name': 'domain-sandbox', 'Id': 'account_2'}, {'Name': 'app1-sandbox', 'Id': 'account_3'}, {'Name': 'app1-prod', 'Id': 'account_4'}, {'Name': 'app2-sandbox', 'Id': 'account_5'}, {'Name': 'app2-prod', 'Id': 'account_6'}]
+    assert cls.dir_to_ou("/domain") == [{'Name': 'domain-sandbox', 'Id': 'account_2'}]
+    assert cls.dir_to_ou("/domain/app2/prod") == [{'Name': 'app2-prod', 'Id': 'account_6'}]
+

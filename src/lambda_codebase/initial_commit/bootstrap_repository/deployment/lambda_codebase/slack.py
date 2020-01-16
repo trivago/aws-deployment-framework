@@ -13,6 +13,7 @@ import boto3
 
 from parameter_store import ParameterStore
 
+
 def extract_pipeline(message):
     """
     Try extract the pipeline name from the message (approval/success/failure)
@@ -20,20 +21,29 @@ def extract_pipeline(message):
     since we want to access the main notification endpoint for bootstrap events
     """
     try:
-        name = message.get('approval', {}).get('pipelineName', None) or message.get("detail", {}).get("pipeline", None)
+        name = (
+            message.get("approval", {}).get("pipelineName", None)
+            or message.get("detail", {}).get("pipeline", None)
+            or message.get("detail", {}).get("stateMachineArn", "").split(":")[-1]
+            or "main"
+        )
         return {
             "name": name.split("{0}".format(os.environ.get("ADF_PIPELINE_PREFIX")))[-1],
-            "state": message.get("detail", {}).get("state"),
+            "state": message.get("detail", {}).get("state")
+            or message.get("detail", {}).get("status"),
             "time": message.get("time"),
-            "account_id": message.get("account")
+            "account_id": message.get("account"),
         }
     except AttributeError:
         return {
-            "name": message.split("{0}".format(os.environ.get("ADF_PIPELINE_PREFIX")))[-1].split(' from account')[0],
-            "state": message.split('has ')[-1].split(' at')[0],
-            "time": message.split('at ')[-1],
-            "account_id": message.split('account ')[-1].split(' has')[0]
+            "name": message.split("{0}".format(os.environ.get("ADF_PIPELINE_PREFIX")))[
+                -1
+            ].split(" from account")[0],
+            "state": message.split("has ")[-1].split(" at")[0],
+            "time": message.split("at ")[-1],
+            "account_id": message.split("account ")[-1].split(" has")[0],
         }
+
 
 def is_approval(message):
     """
@@ -41,7 +51,8 @@ def is_approval(message):
     """
     if isinstance(message, str):
         return False
-    return message.get('approval', None)
+    return message.get("approval", None)
+
 
 def is_bootstrap(event):
     """
@@ -50,13 +61,19 @@ def is_bootstrap(event):
     raise a ValueError
     """
     try:
-        message = json.loads(event['Records'][0]['Sns']['Message'])
+        message = json.loads(event["Records"][0]["Sns"]["Message"])
         if isinstance(message, dict):
-            if message.get('Error'):
+            if message.get("Error"):
                 return True
         return False
     except ValueError:
         return True
+
+
+def is_text(message):
+    if isinstance(message, str):
+        return True
+
 
 def extract_message(event):
     """
@@ -64,11 +81,12 @@ def extract_message(event):
     This will raise a ValueError (JSONDecode) on bootstrap and thus we should
     return the raw message.
     """
-    message = event['Records'][0]['Sns']['Message']
+    message = event["Records"][0]["Sns"]["Message"]
     try:
         return json.loads(message)
     except ValueError:
         return message
+
 
 def create_approval(channel, message):
     """
@@ -76,81 +94,94 @@ def create_approval(channel, message):
     """
     return {
         "text": ":clock1: Pipeline {0} in {1} requires approval".format(
-            message["approval"]["pipelineName"],
-            message["approval"]["customData"]
+            message["approval"]["pipelineName"], message["approval"]["customData"]
         ),
         "channel": channel,
         "attachments": [
             {
-                "fallback": "Approve or Deny Deployment at {0}".format(message["consoleLink"]),
+                "fallback": "Approve or Deny Deployment at {0}".format(
+                    message["consoleLink"]
+                ),
                 "actions": [
                     {
                         "type": "button",
                         "text": "Approve or Deny Deployment",
-                        "url": "{0}".format(message["consoleLink"])
+                        "url": "{0}".format(message["consoleLink"]),
                     }
-                ]
+                ],
             }
-        ]
-        }
+        ],
+    }
+
 
 def create_pipeline_message_text(channel, pipeline):
     """
     Creates a dict that will be sent to send_message for pipeline success or failures
     """
-    emote = ":red_circle:" if pipeline.get("state") == "FAILED" else ":white_check_mark:"
+    emote = (
+        ":red_circle:" if pipeline.get("state") == "FAILED" else ":white_check_mark:"
+    )
     return {
         "channel": channel,
         "text": "{0} Pipeline {1} on {2} has {3}".format(
-            emote,
-            pipeline["name"],
-            pipeline["account_id"],
-            pipeline["state"]
-            )
+            emote, pipeline["name"], pipeline["account_id"], pipeline["state"]
+        ),
     }
+
 
 def create_bootstrap_message_text(channel, message):
     """
     Creates a dict that will be sent to send_message for bootstrapping completion
     """
     if isinstance(message, dict):
-        if message.get('Error'):
-            message = json.loads(message.get('Cause')).get('errorMessage')
+        if message.get("Error"):
+            message = json.loads(message.get("Cause")).get("errorMessage")
 
-    emote = ":red_circle:" if any(x in message for x in ['error', 'Failed']) else ":white_check_mark:"
-    return {
-        "channel": channel,
-        "text": "{0} {1}".format(emote, message)
-    }
+    emote = (
+        ":red_circle:"
+        if any(x in message.lower() for x in ["error", "failed"])
+        else ":white_check_mark:"
+    )
+    return {"channel": channel, "text": "{0} {1}".format(emote, message)}
+
 
 def send_message(url, payload):
     """
     Sends the message to the designated slack webhook
     """
-    params = json.dumps(payload).encode('utf8')
+    params = json.dumps(payload).encode("utf8")
     req = urllib.request.Request(
-        url,
-        data=params,
-        headers={'content-type': 'application/json'}
+        url, data=params, headers={"content-type": "application/json"}
     )
     return urllib.request.urlopen(req)
+
 
 def lambda_handler(event, _):
     message = extract_message(event)
     pipeline = extract_pipeline(message)
     parameter_store = ParameterStore(os.environ["AWS_REGION"], boto3)
-    secrets_manager = boto3.client('secretsmanager', region_name=os.environ["AWS_REGION"])
-    channel = parameter_store.fetch_parameter(
-        name='/notification_endpoint/{0}'.format(pipeline["name"]),
-        with_decryption=False
+    secrets_manager = boto3.client(
+        "secretsmanager", region_name=os.environ["AWS_REGION"]
     )
-    # All slack url's must be stored in /adf/slack/channel_name since ADF only has access to the /adf/ prefix by default
-    url = json.loads(secrets_manager.get_secret_value(SecretId='/adf/slack/{0}'.format(channel))['SecretString'])
+    channel = parameter_store.fetch_parameter(
+        name="/notification_endpoint/{0}".format(pipeline["name"]),
+        with_decryption=False,
+    )
+    # All slack url"s must be stored in /adf/slack/channel_name since ADF only has access to the /adf/ prefix by default
+    url = secrets_manager.get_secret_value(
+        SecretId="/notification_endpoint/hooks/slack/{0}".format(channel)
+    )["SecretString"]
+
     if is_approval(message):
         send_message(url[channel], create_approval(channel, message))
         return
     if is_bootstrap(event):
         send_message(url[channel], create_bootstrap_message_text(channel, message))
         return
+
+    if is_text(message):
+        send_message(url, create_bootstrap_message_text(channel, message))
+        return
+
     send_message(url[channel], create_pipeline_message_text(channel, pipeline))
     return

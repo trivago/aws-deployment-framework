@@ -49,3 +49,101 @@ describe_organizational_unit = {
         'Name': 'some_ou_name'
     }
 }
+
+
+organization_map = {
+            "Name": "root_name",
+            "Id": "root_id",
+            "Accounts": [
+                {
+                    "Name": "core",
+                    "Id": "account_1"
+                }
+            ],
+            "OrganizationalUnits": [
+                {
+                    "Name": "domain",
+                    "Id": "ou_id_1",
+                    "Accounts": [
+                        {
+                            "Name": "domain-sandbox",
+                            "Id": "account_2"
+                        }
+                    ],
+                    "OrganizationalUnits": [
+                        {
+                            "Name": "app1",
+                            "Id": "ou_id_1_1",
+                            "Accounts": [
+                                {
+                                    "Name": "app1-sandbox",
+                                    "Id": "account_3"
+                                }
+                            ],
+                            "OrganizationalUnits": [
+                                {
+                                    "Name": "prod",
+                                    "Id": "ou_id_1_1_1",
+                                    "Accounts": [
+                                        {
+                                            "Name": "app1-prod",
+                                            "Id": "account_4"
+                                        }
+                                    ],
+                                    "OrganizationalUnits":[]
+                                }
+                            ]
+                        },
+                        {
+                            "Name": "app2",
+                            "Id": "ou_id_1_2",
+                            "Accounts": [
+                                {
+                                    "Name": "app2-sandbox",
+                                    "Id": "account_5"
+                                }
+                            ],
+                            "OrganizationalUnits": [
+                                {
+                                    "Name": "prod",
+                                    "Id": "ou_id_1_2_1",
+                                    "Accounts": [
+                                        {
+                                            "Name": "app2-prod",
+                                            "Id": "account_6"
+                                        }
+                                    ],
+                                    "OrganizationalUnits":[]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+
+
+def find(key, dictionary):
+    if dictionary["Id"] == key:
+        return dictionary
+    for d in dictionary["OrganizationalUnits"]:
+        result = find(key, d)
+        if result: 
+            return result
+
+def get_accounts_for_parent(ParentId):  
+      
+    return find(ParentId, organization_map)["Accounts"]
+
+def get_child_ous(ParentId):
+    return (find(ParentId, organization_map)["OrganizationalUnits"])
+
+def list_roots():
+    return {
+        "Roots": [
+            {
+                "Name": "root_name",
+                "Id": "root_id"
+            }
+        ]
+    }
